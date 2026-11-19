@@ -1,0 +1,36 @@
+# On every push to main: build a Windows .exe and publish it as the "latest" Release,
+# so anyone can download file_scanner.exe and double-click it. No setup or secrets needed.
+name: Build Windows exe
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        run: pip install openpyxl pyinstaller
+
+      - name: Build exe
+        run: pyinstaller --onefile --console --name file_scanner file_scanner.py
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: File Scanner (latest)
+          body: Download **file_scanner.exe** below and double-click it. Built automatically from the latest code.
+          files: dist/file_scanner.exe
+          make_latest: true
