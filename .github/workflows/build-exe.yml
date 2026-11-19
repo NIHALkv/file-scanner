@@ -31,6 +31,8 @@ jobs:
         with:
           tag_name: latest
           name: File Scanner (latest)
-          body: Download **file_scanner.exe** below and double-click it. Built automatically from the latest code.
-          files: dist/file_scanner.exe
+          body: Download **file_scanner.exe** below and double-click it. See **README.txt** for a quick guide. Built automatically from the latest code.
+          files: |
+            dist/file_scanner.exe
+            README.txt
           make_latest: true
