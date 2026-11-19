@@ -4,9 +4,9 @@ Scans a folder (or a whole drive) and saves an Excel list of every file:
 File Name | Folder Path | Full Path | Type | Size (KB) | Last Modified
 
 Usage:
-    Double-click file_scanner.exe (Windows)   -> a folder picker opens
-    python file_scanner.py                    -> a folder picker opens
-    python file_scanner.py "C:\\Users\\me"     -> scan that folder directly
+    Double-click file_scanner.exe (Windows)   -> scans ALL drives on this computer
+    python file_scanner.py                    -> scans ALL drives on this computer
+    python file_scanner.py "C:\\Users\\me"     -> scan only that folder
 """
 
 import os
@@ -21,32 +21,26 @@ from openpyxl.styles import Font, PatternFill
 EXCEL_ROW_LIMIT = 1_000_000  # Excel max is 1,048,576 rows per sheet; new sheet after this
 HEADERS = ["File Name", "Folder Path", "Full Path", "Type", "Size (KB)", "Last Modified"]
 
-# Folders that are huge, system-owned or not useful to list
-SKIP_FOLDERS = {
-    "$recycle.bin", "system volume information", "windows", "programdata",
-    "appdata", "node_modules", ".git", "__pycache__", "$windows.~bt", "$windows.~ws",
-    "library", "proc", "sys", "dev",
+# Skipped wherever they appear: system junk, not useful to list
+SKIP_ANYWHERE = {
+    "$recycle.bin", "system volume information", "appdata",
+    "node_modules", ".git", "__pycache__",
+}
+# Skipped only at the top of a drive: operating-system folders
+SKIP_AT_DRIVE_ROOT = {
+    "windows", "programdata", "$windows.~bt", "$windows.~ws", "recovery",
+    "proc", "sys", "dev", "run", "snap", "system", "library", "private", "volumes",
 }
 
 
-def pick_folder():
-    """Ask the user which folder to scan: folder picker if possible, else typed input."""
+def folders_to_scan():
+    """Default: every drive on this computer. A folder passed on the command line overrides it."""
     if len(sys.argv) > 1:
-        return sys.argv[1]
-    try:
-        import tkinter as tk
-        from tkinter import filedialog
-
-        root = tk.Tk()
-        root.withdraw()
-        root.attributes("-topmost", True)
-        folder = filedialog.askdirectory(title="Choose a folder (or drive) to scan")
-        root.destroy()
-        return folder
-    except Exception:
-        default = os.path.expanduser("~")
-        typed = input(f"Folder to scan [press Enter for {default}]: ").strip().strip('"')
-        return typed or default
+        return [sys.argv[1]]
+    if sys.platform.startswith("win"):
+        import string
+        return [f"{letter}:\\" for letter in string.ascii_uppercase if os.path.exists(f"{letter}:\\")]
+    return ["/"]  # macOS / Linux: whole file system
 
 
 def output_path():
@@ -59,8 +53,16 @@ def output_path():
 
 def scan(root_folder):
     """Yield one row per file. Skips folders it cannot open instead of crashing."""
+    root_norm = os.path.normpath(root_folder)
+    is_drive_root = root_norm == os.path.normpath(os.path.splitdrive(root_norm)[0] + os.sep)
     for current, dirs, files in os.walk(root_folder, onerror=lambda e: None):
-        dirs[:] = [d for d in dirs if d.lower() not in SKIP_FOLDERS and not d.startswith(".")]
+        at_root = is_drive_root and os.path.normpath(current) == root_norm
+        dirs[:] = [
+            d for d in dirs
+            if d.lower() not in SKIP_ANYWHERE
+            and not d.startswith(".")
+            and not (at_root and d.lower() in SKIP_AT_DRIVE_ROOT)
+        ]
         for name in files:
             full = os.path.join(current, name)
             try:
@@ -93,30 +95,33 @@ def new_sheet(wb, index):
 
 
 def main():
-    folder = pick_folder()
-    if not folder or not os.path.isdir(folder):
-        print("No valid folder chosen. Exiting.")
-        input("Press Enter to close...")
+    folders = [f for f in folders_to_scan() if os.path.isdir(f)]
+    if not folders:
+        print("Nothing to scan. Exiting.")
+        if getattr(sys, "frozen", False):
+            input("Press Enter to close...")
         return
 
     out = output_path()
-    print(f"\nScanning: {folder}")
-    print("This can take a few minutes for a whole drive...\n")
+    print("Scanning all files on: " + ", ".join(folders))
+    print("This can take several minutes for a full computer...\n")
 
     wb = Workbook(write_only=True)
-    sheet_no, ws, rows_in_sheet, total = 1, None, 0, 0
+    sheet_no, rows_in_sheet, total = 1, 0, 0
     ws = new_sheet(wb, sheet_no)
     start = time.time()
 
-    for row in scan(folder):
-        if rows_in_sheet >= EXCEL_ROW_LIMIT:
-            sheet_no += 1
-            ws, rows_in_sheet = new_sheet(wb, sheet_no), 0
-        ws.append(row)
-        rows_in_sheet += 1
-        total += 1
-        if total % 5000 == 0:
-            print(f"  {total:,} files found...")
+    for folder in folders:
+        print(f"-> {folder}")
+        for row in scan(folder):
+            if rows_in_sheet >= EXCEL_ROW_LIMIT:
+                sheet_no += 1
+                ws, rows_in_sheet = new_sheet(wb, sheet_no), 0
+            ws.append(row)
+            rows_in_sheet += 1
+            total += 1
+            if total % 5000 == 0:
+                print(f"  {total:,} files found...")
 
     wb.save(out)
     secs = round(time.time() - start, 1)
